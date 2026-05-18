@@ -17,15 +17,6 @@ custom_hid_prefix = 0xFF
 read_timeout = 1000
 
 
-# True if the macropad has ever been heard from since boot.
-macropad_hid_initialised = False
-# True if the macropad is currently available.
-# False if it hasn't been heard from in a while.
-# 
-# NOTE: Currently this is not automatically updated (no heartbeat pings).
-macropad_hid_available = False
-
-
 """
 Define the codes for the custom RAW HID commands (identical to the custom_hid_commands enum in firmware)
 """
@@ -56,7 +47,7 @@ hid_cmd_status_res = 0x09 # [mem, cpu, gpu, gui, crashes, kernel]
 """ End custom_hid_commands """
 
 
-# Store the index of the key at each physical position
+# The index of the key at each physical position
 key_indices_2d_map = (
     (5,  2, 22, 17),
     (4,  0, 20, 18),
@@ -65,7 +56,7 @@ key_indices_2d_map = (
     (9, 11, 15, 13),
     (8, 10, 14, 12),
 )
-# Store the physical position of each key by index
+# The physical position of each key by index
 key_coordinates = (
     ( 1, 1 ),
     ( 1, 2 ),
@@ -92,6 +83,13 @@ key_coordinates = (
     ( 2, 0 ),
     ( 2, 3 ),
 )
+
+
+# True if the macropad has ever been heard from since boot.
+macropad_hid_initialised = False
+
+# Store the current layer (updated by layer_state_set_user).
+current_layer = 1
 
 
 
@@ -175,7 +173,6 @@ def handle_custom_hid(data):
     
     # We heard from the macropad, update availability
     macropad_hid_initialised = True
-    macropad_hid_available = True
     
     if len(data) != report_length:
         print("WARNING: Message length ("+len(data)+") not equal to expected report length, skipping.")
@@ -196,6 +193,11 @@ def handle_custom_hid(data):
     elif command_id == hid_cmd_ack:
         # Ping acknowledged, macropad must be available
         print("Ping acknowledged")
+        
+    elif command_id == hid_cmd_set_layer:
+        # The layer has changed
+        current_layer = command_data[0]
+        print("Layer changed to "+str(current_layer))
         
     else:
         # Not a known command
@@ -236,6 +238,7 @@ if __name__ == '__main__':
     # Send a ping
     send_command(macropad_interface, hid_cmd_ping, [])
     
+    # Listen for messages
     while True:
         read_interface(macropad_interface, read_timeout)
     
