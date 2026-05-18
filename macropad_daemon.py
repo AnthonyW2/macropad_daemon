@@ -179,7 +179,8 @@ def handle_custom_hid(data):
     command_data = data[2:]
     
     if command_id == hid_cmd_ping:
-        # Ping received, need to acknowledge
+        # Ping received, acknowledge it
+        send_command(macropad_interface, hid_cmd_ack, [])
         print("Ping received")
         
     elif command_id == hid_cmd_ack:
