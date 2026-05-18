@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import asyncio
 import hid
 from enum import Enum
 
@@ -86,6 +87,10 @@ key_coordinates = (
 )
 
 
+# Global queue for messages to be sent to the macropad
+outgoing_hid_queue = asyncio.Queue()
+
+
 # True if the macropad has ever been heard from since boot
 macropad_hid_initialised = False
 
@@ -96,6 +101,34 @@ current_layer = 1
 rgb_brightness_shift = 3
 
 
+
+async def main():
+    """
+    Start the daemon: connect to the macropad, validate two-way communication, and schedule asynchronous tasks.
+    """
+    # Get RAW HID handle
+    global macropad_interface
+    macropad_interface = get_raw_hid_interface(macropad_vid, macropad_pid)
+    
+    # Exit if it isn't found
+    if macropad_interface is None:
+        print("No device found")
+        return
+    
+    # Exit if the macropad doesn't acknowledge a ping
+    if not await blocking_ping(macropad_interface):
+        print("Macropad did not return ping")
+        return
+    
+    # Schedule asynchronous RAW HID tasks
+    asyncio.create_task(hid_reader(macropad_interface))
+    asyncio.create_task(hid_writer(macropad_interface))
+    
+    # Synchronise default states
+    await synchronise_states()
+    
+    # Sleep until killed
+    await asyncio.Event().wait()
 
 def get_raw_hid_interface(vid, pid, usage_page = 0xFF60, usage_id = 0x61):
     """
@@ -125,6 +158,25 @@ def get_raw_hid_interface(vid, pid, usage_page = 0xFF60, usage_id = 0x61):
     
     return interface
 
+async def blocking_ping(interface):
+    """
+    Send a ping and wait for the response.
+    
+    :param interface: RAW HID handle for the keyboard.
+    """
+    
+    # Send a ping
+    send_command(macropad_interface, hid_cmd_ping, [])
+    
+    # Wait for a response
+    response_data = interface.read(report_length, timeout=read_timeout)
+    
+    # Validate that the macropad acknowledged the ping
+    if len(response_data) > 0 and handle_custom_hid(response_data) == hid_cmd_ack:
+        return True
+    
+    return False
+
 def send_command(interface, command_id, data):
     """
     Send a RAW HID command over the given interface.
@@ -133,7 +185,7 @@ def send_command(interface, command_id, data):
     
     :param command_id: Identifier of the command.
     
-    :param data: Raw data to send (should be of length report_length-2).
+    :param data: Raw data to send (length should be at most report_length-2).
     """
     
     # Ensure the length of the data is correct
@@ -154,21 +206,54 @@ def send_command(interface, command_id, data):
     except:
         print("ERROR: Failed to send report with command ID "+str(command_id))
 
-def read_interface(interface, timeout):
+async def hid_reader(interface):
     """
-    Read a message from the keyboard, if there is one.
+    Listen for messages from the macropad, handling them as they come in.
     
     :param interface: RAW HID handle for the keyboard.
+    """
+    while True:
+        data = await asyncio.to_thread(
+            interface.read,
+            report_length,
+            read_timeout
+        )
+        
+        if len(data) > 0:
+            handle_custom_hid(data)
+
+async def hid_writer(interface):
+    """
+    Send messages to the macropad, taking them off the outgoing_hid_queue as they come in.
     
-    :param timeout: Amount of time (in milliseconds) to wait for a message.
+    :param interface: RAW HID handle for the keyboard.
+    """
+    while True:
+        command_id, data = await outgoing_hid_queue.get()
+        
+        send_command(
+            macropad_interface,
+            command_id,
+            data
+        )
+
+
+
+async def queue_command(command_id, data):
+    """
+    Add a RAW HID command to the command queue
+    
+    :param command_id: Identifier of the command.
+    
+    :param data: Raw data to send (length should be at most report_length-2).
     """
     
-    report_data = interface.read(report_length, timeout=timeout)
+    # Ensure the length of the data is correct
+    assert len(data) <= report_length - 2
     
-    if len(report_data) > 0:
-        return handle_custom_hid(report_data)
-    
-    return None
+    await outgoing_hid_queue.put(
+        (command_id, data)
+    )
 
 def handle_custom_hid(data):
     """
@@ -215,35 +300,18 @@ def handle_custom_hid(data):
     
     return command_id
 
-def init_daemon(interface):
+async def synchronise_states():
     """
-    Execute some commands when the daemon starts, setting up the default state of the macropad.
-    
-    :param interface: RAW HID handle for the keyboard.
+    Synchronise some state information with the macropad.
     """
-    
-    # Send a ping
-    send_command(macropad_interface, hid_cmd_ping, [])
-    
-    # Check if the macropad acknowledges the ping, and exit if it doesn't
-    if read_interface(interface, read_timeout) != hid_cmd_ack:
-        print("Macropad did not return ping")
-        sys.exit(1)
     
     # Set the layer
-    send_command(macropad_interface, hid_cmd_set_layer, [current_layer])
+    await queue_command(hid_cmd_set_layer, [current_layer])
     
     # Set the brightness of the LEDs
-    send_command(macropad_interface, hid_cmd_set_bright, [rgb_brightness_shift])
+    await queue_command(hid_cmd_set_bright, [rgb_brightness_shift])
 
-def listen_for_messages(interface):
-    """
-    Listen for messages from the macropad.
-    
-    :param interface: RAW HID handle for the keyboard.
-    """
-    while True:
-        read_interface(macropad_interface, read_timeout)
+
 
 def coords_to_key(x, y):
     """
@@ -271,17 +339,5 @@ def key_to_coords(key):
 
 
 if __name__ == '__main__':
-    macropad_interface = get_raw_hid_interface(macropad_vid, macropad_pid)
-    
-    if macropad_interface is None:
-        print("No device found")
-        sys.exit(1)
-    
-    # Run initialisation
-    init_daemon(macropad_interface)
-    
-    # Listen for messages
-    listen_for_messages(macropad_interface)
-    
-    macropad_interface.close()
+    asyncio.run(main())
 
