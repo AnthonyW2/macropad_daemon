@@ -16,6 +16,44 @@ report_length = 32
 # Custom command namespace
 custom_hid_prefix = 0xFF
 
+# Store the index of the key at each physical position
+key_indices_2d_map = (
+    (5,  2, 22, 17),
+    (4,  0, 20, 18),
+    (7,  1, 21, 16),
+    (6,  3, 23, 19),
+    (9, 11, 15, 13),
+    (8, 10, 14, 12),
+)
+# Store the physical position of each key by index
+key_coordinates = (
+    ( 1, 1 ),
+    ( 1, 2 ),
+    ( 1, 0 ),
+    ( 1, 3 ),
+    ( 0, 1 ),
+    ( 0, 0 ),
+    ( 0, 3 ),
+    ( 0, 2 ),
+    ( 0, 5 ),
+    ( 0, 4 ),
+    ( 1, 5 ),
+    ( 1, 4 ),
+    ( 3, 5 ),
+    ( 3, 4 ),
+    ( 2, 5 ),
+    ( 2, 4 ),
+    ( 3, 2 ),
+    ( 3, 0 ),
+    ( 3, 1 ),
+    ( 3, 3 ),
+    ( 2, 1 ),
+    ( 2, 2 ),
+    ( 2, 0 ),
+    ( 2, 3 ),
+)
+
+
 
 def get_raw_hid_interface(vid, pid, usage_page = 0xFF60, usage_id = 0x61):
     """
@@ -69,6 +107,29 @@ def send_raw_report(interface, data):
         print(response_report)
     except:
         print("Failed to send report")
+
+def coords_to_key(x, y):
+    """
+    Convert Macropad key coordinates to LED index
+    
+    :param x: Column of the key (left is 0).
+    :param y: Row of the key (top is 0).
+    """
+    
+    assert x >= 0 and x < 4 and y >=0 and y < 6
+    
+    return key_indices_2d_map[y][x]
+
+def key_to_coords(key):
+    """
+    Convert Macropad key index to physical coordinates
+    
+    :param key: Index of the key
+    """
+    
+    assert key >= 0 and key < 24
+    
+    return key_coordinates[key]
 
 
 
