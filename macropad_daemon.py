@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import hid
 from enum import Enum
 
@@ -28,21 +29,21 @@ hid_cmd_ack        = 0x01
 # Send/receive new layer
 hid_cmd_set_layer  = 0x02 # [layer]
 
-# Receive a new RGB value for a key
+# Send a new RGB value for a key
 hid_cmd_set_rgb    = 0x03 # [key id, r, g, b]
-# Receive a new overall brightness level
+# Send a new overall brightness level
 hid_cmd_set_bright = 0x04 # [brightness divisor]
 # RGB matrix enable/disable & set mode
 hid_cmd_rgb_matrix = 0x05 # [new state, new mode]
 
-# Send a key downpress event
+# Receive a key downpress event
 hid_cmd_key_down   = 0x06 # [key id]
-# Send a key release event
+# Receive a key release event
 hid_cmd_key_up     = 0x07 # [key id]
 
-# Ask the daemon for host system status
+# Receive a request for host system status
 hid_cmd_status_req = 0x08
-# Receive host system status response
+# Send host system status response
 hid_cmd_status_res = 0x09 # [mem, cpu, gpu, gui, crashes, kernel]
 """ End custom_hid_commands """
 
@@ -85,11 +86,14 @@ key_coordinates = (
 )
 
 
-# True if the macropad has ever been heard from since boot.
+# True if the macropad has ever been heard from since boot
 macropad_hid_initialised = False
 
-# Store the current layer (updated by layer_state_set_user).
+# Store the current layer
 current_layer = 1
+
+# Current RGB brightness shift
+rgb_brightness_shift = 3
 
 
 
@@ -162,7 +166,9 @@ def read_interface(interface, timeout):
     report_data = interface.read(report_length, timeout=timeout)
     
     if len(report_data) > 0:
-        handle_custom_hid(report_data)
+        return handle_custom_hid(report_data)
+    
+    return None
 
 def handle_custom_hid(data):
     """
@@ -199,9 +205,36 @@ def handle_custom_hid(data):
         current_layer = command_data[0]
         print("Layer changed to "+str(current_layer))
         
+    elif command_id == hid_cmd_set_bright:
+        # The brightness has changed
+        print("Brightness changed to "+str(command_data[0]))
+        
     else:
         # Not a known command
         print("WARNING: Unknown command with ID "+str(command_id))
+    
+    return command_id
+
+def init_daemon(interface):
+    """
+    Execute some commands when the daemon starts, setting up the default state of the macropad.
+    
+    :param interface: RAW HID handle for the keyboard.
+    """
+    
+    # Send a ping
+    send_command(macropad_interface, hid_cmd_ping, [])
+    
+    # Check if the macropad acknowledges the ping, and exit if it doesn't
+    if read_interface(interface, read_timeout) != hid_cmd_ack:
+        print("Macropad did not return ping")
+        sys.exit(1)
+    
+    # Set the layer
+    send_command(macropad_interface, hid_cmd_set_layer, [current_layer])
+    
+    # Set the brightness of the LEDs
+    send_command(macropad_interface, hid_cmd_set_bright, [rgb_brightness_shift])
 
 def coords_to_key(x, y):
     """
@@ -235,8 +268,7 @@ if __name__ == '__main__':
         print("No device found")
         sys.exit(1)
     
-    # Send a ping
-    send_command(macropad_interface, hid_cmd_ping, [])
+    init_daemon(macropad_interface)
     
     # Listen for messages
     while True:
