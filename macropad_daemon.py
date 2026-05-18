@@ -7,10 +7,6 @@ from enum import Enum
 macropad_vid = 0x32ac
 macropad_pid = 0x0013
 
-# Default QMK usage page identifiers
-usage_page    = 0xFF60
-usage_id      = 0x61
-
 # Equal to QMK's RAW_EPSIZE
 report_length = 32
 
@@ -19,6 +15,16 @@ custom_hid_prefix = 0xFF
 
 # Amount of time to wait for each read to complete
 read_timeout = 1000
+
+
+# True if the macropad has ever been heard from since boot.
+macropad_hid_initialised = False
+# True if the macropad is currently available.
+# False if it hasn't been heard from in a while.
+# 
+# NOTE: Currently this is not automatically updated (no heartbeat pings).
+macropad_hid_available = False
+
 
 """
 Define the codes for the custom RAW HID commands (identical to the custom_hid_commands enum in firmware)
@@ -166,6 +172,10 @@ def handle_custom_hid(data):
     
     :param data: RAW HID report, with length report_length.
     """
+    
+    # We heard from the macropad, update availability
+    macropad_hid_initialised = True
+    macropad_hid_available = True
     
     if len(data) != report_length:
         print("WARNING: Message length ("+len(data)+") not equal to expected report length, skipping.")
