@@ -236,6 +236,15 @@ def init_daemon(interface):
     # Set the brightness of the LEDs
     send_command(macropad_interface, hid_cmd_set_bright, [rgb_brightness_shift])
 
+def listen_for_messages(interface):
+    """
+    Listen for messages from the macropad.
+    
+    :param interface: RAW HID handle for the keyboard.
+    """
+    while True:
+        read_interface(macropad_interface, read_timeout)
+
 def coords_to_key(x, y):
     """
     Convert Macropad key coordinates to LED index
@@ -268,11 +277,11 @@ if __name__ == '__main__':
         print("No device found")
         sys.exit(1)
     
+    # Run initialisation
     init_daemon(macropad_interface)
     
     # Listen for messages
-    while True:
-        read_interface(macropad_interface, read_timeout)
+    listen_for_messages(macropad_interface)
     
     macropad_interface.close()
 
