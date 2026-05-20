@@ -1,0 +1,27 @@
+#!/bin/bash
+
+socket_path="/run/user/1000/macropad.sock"
+
+if [[ -z $1 || "$1" == "-h" || "$1" == "--help" ]]; then
+    cat << EOM
+Send a command to the macropad via the daemon.
+
+Usage: macropad_msg [command] [options]
+
+Commands and options:
+  layer        [new layer: int]
+  rgb          [key: int, r: int, g: int, b: int]
+  bright       [brightness shift: int]
+  rgb_enable   [state: on/off]
+  audio_out    [state: unmute/mute]
+  audio_in     [state: unmute/mute]
+EOM
+    exit 0
+fi
+
+if [[ ! -S $socket_path ]]; then
+    echo "ERROR: Socket $socket_path does not exist"
+    exit 1
+fi
+
+echo "$@" | socat - UNIX-CONNECT:$socket_path
