@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import os
 import asyncio
 import hid
 from enum import Enum
@@ -17,6 +18,8 @@ custom_hid_prefix = 0xFF
 
 # Amount of time to wait for each read to complete
 read_timeout = 1000
+
+socket_path = "/run/user/1000/macropad.sock"
 
 
 """
@@ -123,6 +126,9 @@ async def main():
     # Schedule asynchronous RAW HID tasks
     asyncio.create_task(hid_reader(macropad_interface))
     asyncio.create_task(hid_writer(macropad_interface))
+    
+    # Start the UNIX socket server
+    await start_unix_socket()
     
     # Synchronise default states
     await synchronise_states()
@@ -310,6 +316,47 @@ async def synchronise_states():
     
     # Set the brightness of the LEDs
     await queue_command(hid_cmd_set_bright, [rgb_brightness_shift])
+
+
+
+async def start_unix_socket():
+    """
+    Create a UNIX socket to listen on for IPC.
+    """
+    # Remove old socket if it exists
+    if os.path.exists(socket_path):
+        os.remove(socket_path)
+    
+    # Start the server, letting handle_socket_client handle messages
+    server = await asyncio.start_unix_server(handle_socket_client, path=socket_path)
+    
+    asyncio.create_task(server.serve_forever())
+
+async def handle_socket_client(reader, writer):
+    """
+    Handle incoming messages from the UNIX socket.
+    
+    :param reader: StreamReader object that provides APIs to read data from the IO stream.
+    
+    :param writer: StreamWriter object that provides APIs to write data to the IO stream.
+    """
+    
+    while True:
+        data = await reader.readline()
+        
+        if not data:
+            break
+        
+        print("Received IPC message:", data)
+        
+        response = "ACK\n"
+        
+        writer.write(response.encode())
+        await writer.drain()
+    
+    # Close the connection
+    writer.close()
+    await writer.wait_closed()
 
 
 
