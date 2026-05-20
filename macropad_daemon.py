@@ -36,7 +36,7 @@ hid_cmd_set_layer  = 0x02 # [layer]
 # Send a new RGB value for a key
 hid_cmd_set_rgb    = 0x03 # [key id, r, g, b]
 # Send a new overall brightness level
-hid_cmd_set_bright = 0x04 # [brightness divisor]
+hid_cmd_set_bright = 0x04 # [brightness shift]
 # RGB matrix enable/disable & set mode
 hid_cmd_rgb_matrix = 0x05 # [new state, new mode]
 
@@ -50,6 +50,26 @@ hid_cmd_status_req = 0x08
 # Send host system status response
 hid_cmd_status_res = 0x09 # [mem, cpu, gpu, gui, crashes, kernel]
 """ End custom_hid_commands """
+
+
+"""
+Define the terms for the IPC commands
+"""
+# Set new layer
+ipc_cmd_set_layer  = "layer" # [layer: int]
+
+# Set a new RGB value for a key
+ipc_cmd_set_rgb    = "rgb" # [key: int, r: int, g: int, b: int]
+# Set a new overall brightness level
+ipc_cmd_set_bright = "bright" # [brightness shift: int]
+# Enable/disable RGB matrix
+ipc_cmd_rgb_matrix = "rgb_enable" # [state: on/off]
+
+# Set audio output mute indicator state
+ipc_cmd_audio_ind_out = "audio_out" # [state: unmute/mute]
+# Set audio input (mic) mute indicator state
+ipc_cmd_audio_ind_in = "audio_in" # [state: unmute/mute]
+""" End IPC commands """
 
 
 # The index of the key at each physical position
@@ -99,6 +119,9 @@ macropad_hid_initialised = False
 
 # Store the current layer
 current_layer = 1
+
+# Current RGB matrix state (0 = off)
+rgb_enabled = 1
 
 # Current RGB brightness shift
 rgb_brightness_shift = 3
@@ -178,7 +201,7 @@ async def blocking_ping(interface):
     response_data = interface.read(report_length, timeout=read_timeout)
     
     # Validate that the macropad acknowledged the ping
-    if len(response_data) > 0 and handle_custom_hid(response_data) == hid_cmd_ack:
+    if len(response_data) > 0 and (await handle_custom_hid(response_data)) == hid_cmd_ack:
         return True
     
     return False
@@ -226,7 +249,7 @@ async def hid_reader(interface):
         )
         
         if len(data) > 0:
-            handle_custom_hid(data)
+            await handle_custom_hid(data)
 
 async def hid_writer(interface):
     """
@@ -261,7 +284,7 @@ async def queue_command(command_id, data):
         (command_id, data)
     )
 
-def handle_custom_hid(data):
+async def handle_custom_hid(data):
     """
     Handle a RAW HID message from the macropad.
     
@@ -284,7 +307,7 @@ def handle_custom_hid(data):
     
     if command_id == hid_cmd_ping:
         # Ping received, acknowledge it
-        send_command(macropad_interface, hid_cmd_ack, [])
+        await queue_command(hid_cmd_ack, [])
         print("Ping received")
         
     elif command_id == hid_cmd_ack:
@@ -342,14 +365,14 @@ async def handle_socket_client(reader, writer):
     """
     
     while True:
-        data = await reader.readline()
+        raw_data = await reader.readline()
         
-        if not data:
+        if not raw_data:
             break
         
-        print("Received IPC message:", data)
+        print("Received IPC message:", raw_data)
         
-        response = "ACK\n"
+        response = await handle_ipc_command(raw_data.decode().split(" "))
         
         writer.write(response.encode())
         await writer.drain()
@@ -358,7 +381,135 @@ async def handle_socket_client(reader, writer):
     writer.close()
     await writer.wait_closed()
 
+async def handle_ipc_command(data):
+    """
+    Handle an IPC incoming message from the UNIX socket.
+    
+    :param data: Array of decoded strings making up the message.
+    """
+    
+    command_id = data[0]
+    command_data = data[1:]
+    
+    response = "ACK\n"
+    
+    if command_id == ipc_cmd_set_layer:
+        # Set new layer
+        current_layer = int(command_data[0])
+        await queue_command(hid_cmd_set_layer, [current_layer])
+        
+        response = f"Set layer to {command_data[0]}\n"
+        
+    elif command_id == ipc_cmd_set_rgb:
+        # Set a new RGB value for a key
+        
+        # Decode the command data
+        key = int(command_data[0])
+        r   = int(command_data[1])
+        g   = int(command_data[2])
+        b   = int(command_data[3])
+        
+        # Check bounds
+        if key < 0 or key > 23:
+            return f"ERROR: Invalid key ID: {str(key)}\n"
+        if r < 0 or r > 255 or g < 0 or g > 255 or b < 0 or b > 255:
+            return f"ERROR: RGB components must be between 0 and 255\n"
+        
+        # Send command to macropad
+        await queue_command(hid_cmd_set_rgb, [key, r, g, b])
+        
+        response = f"Changed colour of key {str(key)}\n"
+        
+    elif command_id == ipc_cmd_set_bright:
+        # Set a new overall brightness level
+        
+        new_shift = int(command_data[0])
+        
+        # Check bounds
+        if new_shift < 0 or new_shift > 7:
+            return f"ERROR: Invalid brightness shift: {str(new_shift)}\n"
+        
+        # Update our tracked value
+        rgb_brightness_shift = new_shift
+        
+        # Send command to macropad
+        await queue_command(hid_cmd_set_bright, [rgb_brightness_shift])
+        
+        response = f"Changed brightness shift to {str(new_shift)}\n"
+        
+    elif command_id == ipc_cmd_rgb_matrix:
+        # Enable/disable RGB matrix
+        
+        # Check bounds
+        if command_data[0].strip() == "on":
+            rgb_enabled = 1
+            response = f"Enabled RGB matrix\n"
+        elif command_data[0].strip() == "off":
+            rgb_enabled = 0
+            response = f"Disabled RGB matrix\n"
+        else:
+            return f"ERROR: Invalid RGB matrix state: {command_data[0]}\n"
+        
+        # Send command to macropad
+        await queue_command(hid_cmd_rgb_matrix, [rgb_enabled, 1])
+        
+    elif command_id == ipc_cmd_audio_ind_out:
+        # Set audio output mute indicator state
+        
+        if command_data[0].strip() == "unmute":
+            muted = False
+            response = f"Set audio output mute indicator off\n"
+        elif command_data[0].strip() == "mute":
+            muted = True
+            response = f"Set audio output mute indicator on\n"
+        else:
+            return f"ERROR: Invalid mute state: {command_data[0]}\n"
+        
+        await set_mute_state("output", muted)
+        
+    elif command_id == ipc_cmd_audio_ind_in:
+        # Set audio input (mic) mute indicator state
+        
+        if command_data[0].strip() == "unmute":
+            muted = False
+            response = f"Set audio input mute indicator off\n"
+        elif command_data[0].strip() == "mute":
+            muted = True
+            response = f"Set audio input mute indicator on\n"
+        else:
+            return f"ERROR: Invalid mute state: {command_data[0]}\n"
+        
+        await set_mute_state("input", muted)
+        
+    else:
+        response = f"ERROR: Invalid IPC command: {command_id}\n"
+    
+    return response
 
+
+
+async def set_mute_state(device, muted):
+    """
+    Update a mute indicator LED on the macropad.
+    
+    :param device: Device identifier - "input" or "output"
+    
+    :param muted: Whether or not the device is muted
+    """
+    
+    if device == "input":
+        key_id = 17
+    elif device == "output":
+        key_id = 22
+    else:
+        return
+    
+    if muted:
+        red = 255
+    else:
+        red = 0
+    
+    await queue_command(hid_cmd_set_rgb, [key_id, red, 0, 0])
 
 def coords_to_key(x, y):
     """
