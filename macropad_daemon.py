@@ -319,9 +319,27 @@ async def handle_custom_hid(data):
         current_layer = command_data[0]
         print("Layer changed to "+str(current_layer))
         
+    elif command_id == hid_cmd_set_rgb:
+        # An RGB LED has changed
+        print("RGB state has changed")
+        
     elif command_id == hid_cmd_set_bright:
         # The brightness has changed
         print("Brightness changed to "+str(command_data[0]))
+        
+    elif command_id == hid_cmd_key_down:
+        # A key has been pressed
+        print("Key pressed: "+str(command_data[0]))
+        
+    elif command_id == hid_cmd_key_up:
+        # A key has been released
+        print("Key released: "+str(command_data[0]))
+        
+    elif command_id == hid_cmd_status_req:
+        # Host system status is requested
+        # Send host system status response
+        await system_status_update()
+        print("Status requested")
         
     else:
         # Not a known command
@@ -510,6 +528,38 @@ async def set_mute_state(device, muted):
         red = 0
     
     await queue_command(hid_cmd_set_rgb, [key_id, red, 0, 0])
+
+async def system_status_update():
+    """
+    Respond to a request for the system's status.
+    """
+    
+    # Get memory usage (0-255)
+    memory_usage_proc = await asyncio.create_subprocess_shell("free | head -n 2 | tail -n 1", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    memory_usage_raw, _ = await memory_usage_proc.communicate()
+    memory_usage_used = int(memory_usage_raw.split()[2])
+    memory_usage_total = int(memory_usage_raw.split()[1])
+    memory_usage = int(memory_usage_used * 255 / memory_usage_total)
+    
+    # Overall CPU load (0-255)
+    cpu_load_proc = await asyncio.create_subprocess_shell("uptime -r", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    cpu_load_raw, _ = await cpu_load_proc.communicate()
+    cpu_load = int(float(cpu_load_raw.split()[3])*255/16)
+    
+    # Get GPU load (0-255)
+    gpu_load_proc = await asyncio.create_subprocess_shell("cat '/sys/devices/pci0000:00/0000:00:08.1/0000:c1:00.0/gpu_busy_percent'", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    gpu_load_raw, _ = await gpu_load_proc.communicate()
+    gpu_load = int(int(gpu_load_raw)*255/100)
+    
+    # TO DO: Check for errors and report to macropad
+    gui_state = 0
+    crash_count = 0
+    kernel_state = 0
+    
+    # Send the report to the macropad
+    await queue_command(hid_cmd_status_res, [memory_usage, cpu_load, gpu_load, gui_state, crash_count, kernel_state])
+
+
 
 def coords_to_key(x, y):
     """
