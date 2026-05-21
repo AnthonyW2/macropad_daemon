@@ -1,3 +1,5 @@
 #!/bin/bash
 
-python3 macropad_daemon.py
+script_path=$(dirname $0)
+
+python3 "${script_path}/macropad_daemon.py"
