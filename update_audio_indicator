@@ -1,0 +1,13 @@
+#!/bin/bash
+
+socket_path="/run/user/1000/macropad.sock"
+
+if [[ $1 == "in" ]]; then
+    # Update microphone state
+    state=$([[ $(wpctl get-volume @DEFAULT_AUDIO_SOURCE@) == *MUTED* ]] && echo "mute" || echo "unmute")
+    echo "audio_in $state" | socat - UNIX-CONNECT:$socket_path
+elif [[ $1 == "out" ]]; then
+    # Update speaker state
+    state=$([[ $(wpctl get-volume @DEFAULT_AUDIO_SINK@) == *MUTED* ]] && echo "mute" || echo "unmute")
+    echo "audio_out $state" | socat - UNIX-CONNECT:$socket_path
+fi
